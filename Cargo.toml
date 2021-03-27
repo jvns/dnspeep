@@ -1,0 +1,13 @@
+[package]
+name = "dnsspy"
+version = "0.1.0"
+authors = ["Julia Evans <julia@jvns.ca>"]
+edition = "2018"
+
+[dependencies]
+pcap = {version = "0.8.1", features=["capture-stream"]}
+libc = "0.2.80"
+dns-parser = "0.8.0"
+etherparse = "0.9.0"
+tokio = { version = "0.2", features = ["full"] }
+futures = "0.3"
