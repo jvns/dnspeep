@@ -1,0 +1,80 @@
+name: Publish
+on:
+  push:
+    tags:
+      - '*'
+jobs:
+  publish:
+    name: Publish for ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        name: [
+            linux,
+            macos
+        ]
+
+        include:
+          - name: linux
+            target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            asset_name: dnsspy-linux
+          - name: macos
+            target: x86_64-apple-darwin
+            os: macos-latest
+            asset_name: dnsspy-macos
+          #- name: windows
+          #  os: windows-latest
+          #  artifact_name: target/release/dnsspy.exe
+          #  asset_name: dnsspy-windows
+
+    steps:
+    - uses: actions/checkout@v1
+
+    - name: Install build-essential (Ubuntu)
+      if: runner.os == 'Linux'
+      run: sudo apt-get install -y build-essential
+
+    - name: Install libpcap-dev (Ubuntu)
+      if: runner.os == 'Linux'
+      run: sudo apt-get install -y libpcap-dev
+
+    - name: Compile libpcap and copy to deps
+      if: runner.os == 'Linux'
+      run: |
+        wget https://www.tcpdump.org/release/libpcap-1.10.0.tar.gz
+        mkdir -p target/${{ matrix.target }}/release/deps
+        tar -xf libpcap-1.10.0.tar.gz
+        cd libpcap-1.10.0
+        ./configure --without-libnl
+        make -j8
+        cp libpcap.a ../target/${{ matrix.target }}/release/deps
+
+    - uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: stable
+
+    - name: Install Rust toolchain target
+      run: |
+        rustup target add ${{ matrix.target }}
+
+    - name: Build
+      run: cargo build --release --locked --target ${{ matrix.target }}
+
+    - name: Rename binary 
+      run: mv target/${{matrix.target}}/release/dnsspy ${{ matrix.asset_name }}
+
+    - name: Get the version
+      id: get_version
+      run: echo ::set-output name=VERSION::$(echo $GITHUB_REF | cut -d / -f 3)
+
+    - name: Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ steps.get_version.outputs.VERSION }}
+        release_name: ${{ steps.get_version.outputs.VERSION }}
+        files: ${{ matrix.asset_name }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # You don't need to add this in secrets it's by default.
+
