@@ -1,15 +1,16 @@
+use dns_parser::rdata;
 use dns_parser::Packet as DNSPacket;
-use dns_parser::ResponseCode;
+use dns_parser::{RData, ResourceRecord, ResponseCode};
 use etherparse::IpHeader;
 use etherparse::PacketHeaders;
-use std::collections::HashMap;
-use std::net::IpAddr;
-use std::sync::{Arc, Mutex};
-use tokio::time::{delay_for, Duration};
-
 use futures::StreamExt;
 use pcap::stream::PacketCodec;
 use pcap::{Capture, Error, Linktype, Packet};
+use std::collections::HashMap;
+use std::net::IpAddr;
+use std::str;
+use std::sync::{Arc, Mutex};
+use tokio::time::{delay_for, Duration};
 
 struct OrigPacket {
     qname: String,
@@ -86,8 +87,7 @@ fn print(orig_packet: Packet, linktype: Linktype, map: &mut HashMap<u16, OrigPac
     }
     map.remove(&id);
     let response = if !dns_packet.answers.is_empty() {
-        let answer = &dns_packet.answers[0];
-        format!("{:?}", answer.data)
+        format_answers(dns_packet.answers)
     } else {
         match dns_packet.header.response_code {
             ResponseCode::NoError => "NOERROR".to_string(),
@@ -106,6 +106,40 @@ fn print(orig_packet: Packet, linktype: Linktype, map: &mut HashMap<u16, OrigPac
         src_ip,
         response
     );
+}
+
+fn format_answers(records: Vec<ResourceRecord>) -> String {
+    let formatted: Vec<String> = records.iter().map(|x| format_record(&x.data)).collect();
+    formatted.join(", ")
+}
+
+fn format_record(rdata: &RData) -> String {
+    match rdata {
+        RData::A(rdata::a::Record(addr)) => format!("A: {}", addr),
+        RData::AAAA(rdata::aaaa::Record(addr)) => format!("AAAA: {}", addr),
+        RData::CNAME(rdata::cname::Record(name)) => format!("CNAME: {}", name),
+        RData::PTR(rdata::ptr::Record(name)) => format!("PTR: {}", name),
+        RData::MX(rdata::mx::Record {
+            preference,
+            exchange,
+        }) => format!("MX: {} {}", preference, exchange),
+        RData::NS(rdata::ns::Record(name)) => format!("NS: {}", name),
+        RData::SOA(x) => format!("SOA:{}...", x.primary_ns),
+        RData::SRV(rdata::srv::Record {
+            priority,
+            weight,
+            port,
+            target,
+        }) => format!("SRV: {} {} {} {}", priority, weight, port, target),
+        RData::TXT(x) => {
+            let parts: Vec<String> = x
+                .iter()
+                .map(|bytes| str::from_utf8(bytes).unwrap().to_string())
+                .collect();
+            format!("TXT: {}", parts.join(" "))
+        }
+        _ => panic!("I don't recognize that query type, {:?}", rdata),
+    }
 }
 
 async fn track_no_responses(map: Arc<Mutex<HashMap<u16, OrigPacket>>>) {
