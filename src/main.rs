@@ -54,6 +54,7 @@ impl PacketCodec for PrintCodec {
 }
 
 fn print(orig_packet: Packet, linktype: Linktype, map: &mut HashMap<u16, OrigPacket>) {
+    // Strip the ethernet header
     let packet_data = match linktype {
         Linktype::ETHERNET => &orig_packet.data[14..],
         Linktype::LINUX_SLL => &orig_packet.data[16..],
@@ -61,11 +62,13 @@ fn print(orig_packet: Packet, linktype: Linktype, map: &mut HashMap<u16, OrigPac
         Linktype::IPV6 => &orig_packet.data,
         _ => panic!("unknown link type {:?}", linktype),
     };
+    // Parse the IP header and UDP header
     let packet = PacketHeaders::from_ip_slice(packet_data).unwrap();
     let (src_ip, dest_ip): (IpAddr, IpAddr) = match packet.ip.unwrap() {
         IpHeader::Version4(x) => (x.source.into(), x.destination.into()),
         IpHeader::Version6(x) => (x.source.into(), x.destination.into()),
     };
+    // Parse DNS data
     let dns_packet = DNSPacket::parse(packet.payload).unwrap();
     let question = &dns_packet.questions[0];
     let id = dns_packet.header.id;
