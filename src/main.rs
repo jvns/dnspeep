@@ -22,6 +22,8 @@ struct OrigPacket {
 #[tokio::main]
 async fn main() {
     let map = Arc::new(Mutex::new(HashMap::new()));
+
+    println!("{:5} {:30} {:20} {}", "query", "name", "server IP", "response");
     tokio::join!(capture_packets(map.clone()), track_no_responses(map));
 }
 
@@ -73,6 +75,7 @@ fn print(orig_packet: Packet, linktype: Linktype, map: &mut HashMap<u16, OrigPac
     let dns_packet = DNSPacket::parse(packet.payload).unwrap();
     let question = &dns_packet.questions[0];
     let id = dns_packet.header.id;
+    // This map is a list of requests that haven't gotten a response yet
     if !map.contains_key(&id) {
         map.insert(
             id,
@@ -85,7 +88,9 @@ fn print(orig_packet: Packet, linktype: Linktype, map: &mut HashMap<u16, OrigPac
         );
         return;
     }
+    // If it's the second time we're seeing it, it's a response, so remove it from the map
     map.remove(&id);
+    // Format the response data
     let response = if !dns_packet.answers.is_empty() {
         format_answers(dns_packet.answers)
     } else {
