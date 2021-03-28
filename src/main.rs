@@ -8,8 +8,8 @@ use std::sync::{Arc, Mutex};
 use tokio::time::{delay_for, Duration};
 
 use futures::StreamExt;
-use pcap::stream::{PacketCodec, PacketStream};
-use pcap::{Active, Capture, Error, Packet};
+use pcap::stream::PacketCodec;
+use pcap::{Capture, Error, Linktype, Packet};
 
 struct OrigPacket {
     qname: String,
@@ -25,12 +25,22 @@ async fn main() {
 }
 
 async fn capture_packets(map: Arc<Mutex<HashMap<u16, OrigPacket>>>) {
-    let mut stream = new_stream(map).unwrap();
+    let mut cap = Capture::from_device("any")
+        .unwrap()
+        .immediate_mode(true)
+        .open()
+        .unwrap()
+        .setnonblock()
+        .unwrap();
+    let linktype = cap.get_datalink();
+    cap.filter("udp and port 53").unwrap();
+    let mut stream = cap.stream(PrintCodec { map, linktype }).unwrap();
     while stream.next().await.is_some() {}
 }
 
 pub struct PrintCodec {
     map: Arc<Mutex<HashMap<u16, OrigPacket>>>,
+    linktype: Linktype,
 }
 
 impl PacketCodec for PrintCodec {
@@ -38,24 +48,20 @@ impl PacketCodec for PrintCodec {
 
     fn decode(&mut self, packet: Packet) -> Result<(), Error> {
         let mut map = self.map.lock().unwrap();
-        print(packet, &mut *map);
+        print(packet, self.linktype, &mut *map);
         Ok(())
     }
 }
 
-fn new_stream(
-    map: Arc<Mutex<HashMap<u16, OrigPacket>>>,
-) -> Result<PacketStream<Active, PrintCodec>, Error> {
-    let mut cap = Capture::from_device("any")?
-        .immediate_mode(true)
-        .open()?
-        .setnonblock()?;
-    cap.filter("udp and port 53").unwrap();
-    cap.stream(PrintCodec { map })
-}
-
-fn print(orig_packet: Packet, map: &mut HashMap<u16, OrigPacket>) {
-    let packet = PacketHeaders::from_ethernet_slice(&orig_packet.data[2..]).unwrap();
+fn print(orig_packet: Packet, linktype: Linktype, map: &mut HashMap<u16, OrigPacket>) {
+    let packet_data = match linktype {
+        Linktype::ETHERNET => &orig_packet.data[14..],
+        Linktype::LINUX_SLL => &orig_packet.data[16..],
+        Linktype::IPV4 => &orig_packet.data,
+        Linktype::IPV6 => &orig_packet.data,
+        _ => panic!("unknown link type {:?}", linktype),
+    };
+    let packet = PacketHeaders::from_ip_slice(packet_data).unwrap();
     let (src_ip, dest_ip): (IpAddr, IpAddr) = match packet.ip.unwrap() {
         IpHeader::Version4(x) => (x.source.into(), x.destination.into()),
         IpHeader::Version6(x) => (x.source.into(), x.destination.into()),
