@@ -23,14 +23,12 @@ jobs:
             target: x86_64-apple-darwin
             os: macos-latest
             asset_name: dnsspy-macos
-          #- name: windows
-          #  os: windows-latest
-          #  artifact_name: target/release/dnsspy.exe
-          #  asset_name: dnsspy-windows
-
     steps:
     - uses: actions/checkout@v1
 
+    # we build libpcap from source and statically link it on Linux because
+    # different Linux distros have different names for libpcap.so and so
+    # dynamically linking it doesn't work
     - name: Install build-essential (Ubuntu)
       if: runner.os == 'Linux'
       run: sudo apt-get install -y build-essential
