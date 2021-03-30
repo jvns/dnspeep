@@ -3,9 +3,10 @@ use dns_parser::Packet as DNSPacket;
 use dns_parser::{RData, ResourceRecord, ResponseCode};
 use etherparse::IpHeader;
 use etherparse::PacketHeaders;
+use eyre::{Result, WrapErr};
 use futures::StreamExt;
-use pcap::stream::PacketCodec;
-use pcap::{Capture, Error, Linktype, Packet};
+use pcap::stream::{PacketCodec, PacketStream};
+use pcap::{Active, Capture, Linktype, Packet};
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::str;
@@ -20,27 +21,36 @@ struct OrigPacket {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<()> {
     let map = Arc::new(Mutex::new(HashMap::new()));
 
+    let stream = capture_stream(map.clone())?;
     println!(
         "{:5} {:30} {:20} {}",
         "query", "name", "server IP", "response"
     );
-    tokio::join!(capture_packets(map.clone()), track_no_responses(map));
+    tokio::join!(capture_packets(stream), track_no_responses(map));
+    Ok(())
 }
 
-async fn capture_packets(map: Arc<Mutex<HashMap<u16, OrigPacket>>>) {
+fn capture_stream(
+    map: Arc<Mutex<HashMap<u16, OrigPacket>>>,
+) -> Result<PacketStream<Active, PrintCodec>> {
     let mut cap = Capture::from_device("any")
-        .unwrap()
+        .wrap_err("Failed to find device 'any'")?
         .immediate_mode(true)
         .open()
-        .unwrap()
+        .wrap_err("Failed to start. You need to run this as root.")?
         .setnonblock()
-        .unwrap();
+        .wrap_err("Failed to set nonblocking")?;
     let linktype = cap.get_datalink();
-    cap.filter("udp and port 53", true).unwrap();
-    let mut stream = cap.stream(PrintCodec { map, linktype }).unwrap();
+    cap.filter("udp and port 53", true)
+        .wrap_err("Failed to create BPF filter")?;
+    cap.stream(PrintCodec { map, linktype })
+        .wrap_err("Failed to create stream")
+}
+
+async fn capture_packets(mut stream: PacketStream<Active, PrintCodec>) {
     while stream.next().await.is_some() {}
 }
 
@@ -52,14 +62,21 @@ pub struct PrintCodec {
 impl PacketCodec for PrintCodec {
     type Type = ();
 
-    fn decode(&mut self, packet: Packet) -> Result<(), Error> {
+    fn decode(&mut self, packet: Packet) -> Result<(), pcap::Error> {
         let mut map = self.map.lock().unwrap();
-        print(packet, self.linktype, &mut *map);
+        if let Err(e) = print_packet(packet, self.linktype, &mut *map) {
+            // Continue if there's an error, but print a warning
+            eprintln!("Error parsing DNS packet: {:#}", e);
+        }
         Ok(())
     }
 }
 
-fn print(orig_packet: Packet, linktype: Linktype, map: &mut HashMap<u16, OrigPacket>) {
+fn print_packet(
+    orig_packet: Packet,
+    linktype: Linktype,
+    map: &mut HashMap<u16, OrigPacket>,
+) -> Result<()> {
     // Strip the ethernet header
     let packet_data = match linktype {
         Linktype::ETHERNET => &orig_packet.data[14..],
@@ -71,13 +88,15 @@ fn print(orig_packet: Packet, linktype: Linktype, map: &mut HashMap<u16, OrigPac
         _ => panic!("unknown link type {:?}", linktype),
     };
     // Parse the IP header and UDP header
-    let packet = PacketHeaders::from_ip_slice(packet_data).unwrap();
-    let (src_ip, dest_ip): (IpAddr, IpAddr) = match packet.ip.unwrap() {
-        IpHeader::Version4(x) => (x.source.into(), x.destination.into()),
-        IpHeader::Version6(x) => (x.source.into(), x.destination.into()),
-    };
+    let packet =
+        PacketHeaders::from_ip_slice(packet_data).wrap_err("Failed to parse Ethernet packet")?;
+    let (src_ip, dest_ip): (IpAddr, IpAddr) =
+        match packet.ip.expect("Error: failed to parse IP address") {
+            IpHeader::Version4(x) => (x.source.into(), x.destination.into()),
+            IpHeader::Version6(x) => (x.source.into(), x.destination.into()),
+        };
     // Parse DNS data
-    let dns_packet = DNSPacket::parse(packet.payload).unwrap();
+    let dns_packet = DNSPacket::parse(packet.payload).wrap_err("Failed to parse DNS packet")?;
     let question = &dns_packet.questions[0];
     let id = dns_packet.header.id;
     // This map is a list of requests that haven't gotten a response yet
@@ -91,7 +110,7 @@ fn print(orig_packet: Packet, linktype: Linktype, map: &mut HashMap<u16, OrigPac
                 report: false,
             },
         );
-        return;
+        return Ok(());
     }
     // If it's the second time we're seeing it, it's a response, so remove it from the map
     map.remove(&id);
@@ -116,6 +135,7 @@ fn print(orig_packet: Packet, linktype: Linktype, map: &mut HashMap<u16, OrigPac
         src_ip,
         response
     );
+    Ok(())
 }
 
 fn format_answers(records: Vec<ResourceRecord>) -> String {

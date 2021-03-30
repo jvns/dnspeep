@@ -11,3 +11,4 @@ dns-parser = "0.8.0"
 etherparse = "0.9.0"
 tokio = { version = "0.2", features = ["full"] }
 futures = "0.3"
+eyre = "0.6.5"
