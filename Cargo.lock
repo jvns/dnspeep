@@ -336,8 +336,7 @@ dependencies = [
 [[package]]
 name = "pcap"
 version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "637123ced9e43bec44bf0bbd024f3de61fbf6dfd31767023f639fc5b8ac92c49"
+source = "git+https://github.com/jvns/pcap#ae2aa7f501ae5bb7069155cf7c5c700b7482681d"
 dependencies = [
  "futures",
  "libc",

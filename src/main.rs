@@ -23,7 +23,10 @@ struct OrigPacket {
 async fn main() {
     let map = Arc::new(Mutex::new(HashMap::new()));
 
-    println!("{:5} {:30} {:20} {}", "query", "name", "server IP", "response");
+    println!(
+        "{:5} {:30} {:20} {}",
+        "query", "name", "server IP", "response"
+    );
     tokio::join!(capture_packets(map.clone()), track_no_responses(map));
 }
 
@@ -36,7 +39,7 @@ async fn capture_packets(map: Arc<Mutex<HashMap<u16, OrigPacket>>>) {
         .setnonblock()
         .unwrap();
     let linktype = cap.get_datalink();
-    cap.filter("udp and port 53").unwrap();
+    cap.filter("udp and port 53", true).unwrap();
     let mut stream = cap.stream(PrintCodec { map, linktype }).unwrap();
     while stream.next().await.is_some() {}
 }
@@ -63,6 +66,8 @@ fn print(orig_packet: Packet, linktype: Linktype, map: &mut HashMap<u16, OrigPac
         Linktype::LINUX_SLL => &orig_packet.data[16..],
         Linktype::IPV4 => &orig_packet.data,
         Linktype::IPV6 => &orig_packet.data,
+        Linktype(12) => &orig_packet.data,
+        Linktype(14) => &orig_packet.data,
         _ => panic!("unknown link type {:?}", linktype),
     };
     // Parse the IP header and UDP header
