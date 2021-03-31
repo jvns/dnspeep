@@ -17,7 +17,7 @@ AAAA  www.neopets.com                192.168.1.1     CNAME: r9c3n8d2.stackpathcd
 
 ### Installing
 
-1. Download recent release of `dnspeep` from [the GitHub releases page](https://github.com/dnspeep/dnspeep/releases)
+1. Download recent release of `dnspeep` from [the GitHub releases page](https://github.com/jvns/dnspeep/releases)
 2. Unpack it
 3. Put the `dnspeep` binary in your PATH (for example in `/usr/local/bin`)
 
