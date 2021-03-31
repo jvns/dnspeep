@@ -15,12 +15,13 @@ use std::str;
 use std::sync::{Arc, Mutex};
 use tokio::time::{delay_for, Duration};
 
+#[derive(Clone)]
 struct OrigPacket {
     qname: String,
     typ: String,
     server_ip: String,
     server_port: u16,
-    report: bool,
+    has_response: bool,
 }
 
 #[tokio::main]
@@ -35,7 +36,7 @@ async fn main() -> Result<()> {
     match source {
         Source::Port(port) => {
             let stream = capture_stream(map.clone(), port)?;
-            tokio::join!(capture_packets(stream), track_no_responses(map));
+            capture_packets(stream).await;
         }
         Source::Filename(filename) => {
             capture_file(&filename)?;
@@ -144,9 +145,31 @@ impl PacketCodec for PrintCodec {
 
     fn decode(&mut self, packet: Packet) -> Result<(), pcap::Error> {
         let mut map = self.map.lock().unwrap();
-        if let Err(e) = print_packet(packet, self.linktype, &mut *map) {
-            // Continue if there's an error, but print a warning
-            eprintln!("Error parsing DNS packet: {:#}", e);
+        let map_clone = self.map.clone();
+        match print_packet(packet, self.linktype, &mut *map) {
+            Ok(Some(id)) => {
+                // This means we just got a new query we haven't seen before.
+                // After 1 second, remove from the map and print '<no response>' if there was no
+                // response yet
+                tokio::spawn(async move {
+                    delay_for(Duration::from_millis(1000)).await;
+                    let mut map = map_clone.lock().unwrap();
+                    if let Some(packet) = map.get(&id) {
+                        if packet.has_response == false {
+                            println!(
+                                "{:5} {:30} {:20} <no response>",
+                                packet.typ, packet.qname, packet.server_ip
+                            );
+                        }
+                    }
+                    map.remove(&id);
+                });
+            }
+            Err(e) => {
+                // Continue if there's an error, but print a warning
+                eprintln!("Error parsing DNS packet: {:#}", e);
+            }
+            _ => {}
         }
         Ok(())
     }
@@ -156,7 +179,7 @@ fn print_packet(
     orig_packet: Packet,
     linktype: Linktype,
     map: &mut HashMap<u16, OrigPacket>,
-) -> Result<()> {
+) -> Result<Option<u16>> {
     // Strip the ethernet header
     let packet_data = match linktype {
         Linktype::ETHERNET => &orig_packet.data[14..],
@@ -183,54 +206,63 @@ fn print_packet(
         .expect("Error: Expected UDP packet");
     // Parse DNS data
     let dns_packet = DNSPacket::parse(packet.payload).wrap_err("Failed to parse DNS packet")?;
-    let question = &dns_packet.questions[0];
     let id = dns_packet.header.id;
-    // This map is a list of requests that haven't gotten a response yet
-    if !map.contains_key(&id) {
-        map.insert(
-            id,
-            OrigPacket {
-                typ: format!("{:?}", question.qtype),
-                qname: question.qname.to_string(),
-                server_ip: format!("{}", dest_ip),
-                server_port: udp_header.destination_port,
-                report: false,
-            },
-        );
-        return Ok(());
-    }
-    let orig_packet = map.get(&id).unwrap(); // this unwrap() is ok because we know it's in the map
-    if (format!("{}", src_ip).as_str(), udp_header.source_port)
-        != (orig_packet.server_ip.as_str(), orig_packet.server_port)
-    {
-        // This packet isn't a response to the original packet, so we ignore it -- it's just a retry
-        return Ok(());
-    }
-    // If it's the second time we're seeing it, it's a response, so remove it from the map
-    map.remove(&id);
-    // Format the response data
-    let response = if !dns_packet.answers.is_empty() {
-        format_answers(dns_packet.answers)
-    } else {
-        match dns_packet.header.response_code {
-            ResponseCode::NoError => "NOERROR".to_string(),
-            ResponseCode::ServerFailure => "SERVFAIL".to_string(),
-            ResponseCode::NameError => "NXDOMAIN".to_string(),
-            ResponseCode::Refused => "REFUSED".to_string(),
-            // todo: not sure of the "right" way to represent formaterror / not implemented
-            ResponseCode::FormatError => "FORMATERROR".to_string(),
-            ResponseCode::NotImplemented => "NOTIMPLEMENTED".to_string(),
-            _ => "RESERVED".to_string(),
+    // The map is a list of queries we've seen in the last 1 second
+    // Decide what to do depending on whether this is a query and whether we've seen that ID
+    // recently
+    match (dns_packet.header.query, map.contains_key(&id)) {
+        (true, false) => {
+            // It's a new query, track it
+            let question = &dns_packet.questions[0];
+            map.insert(
+                id,
+                OrigPacket {
+                    typ: format!("{:?}", question.qtype),
+                    qname: question.qname.to_string(),
+                    server_ip: format!("{}", dest_ip),
+                    server_port: udp_header.destination_port,
+                    has_response: false,
+                },
+            );
+            Ok(Some(id))
         }
-    };
-    println!(
-        "{:5} {:30} {:20} {}",
-        format!("{:?}", question.qtype),
-        question.qname.to_string(),
-        src_ip,
-        response
-    );
-    Ok(())
+        (true, true) => {
+            // A query we've seen before is a retry, ignore it
+            Ok(None)
+        }
+        (false, false) => {
+            // A response we haven't seen the query for
+            eprintln!("Warning: got response for unknown query ID {}", id);
+            Ok(None)
+        }
+        (false, true) => {
+            map.entry(id).and_modify(|e| e.has_response = true);
+            // It's a response for a query we remember, so format it and print it out
+            let orig_packet = map.get(&id).unwrap();
+            let response = if !dns_packet.answers.is_empty() {
+                format_answers(dns_packet.answers)
+            } else {
+                match dns_packet.header.response_code {
+                    ResponseCode::NoError => "NOERROR".to_string(),
+                    ResponseCode::ServerFailure => "SERVFAIL".to_string(),
+                    ResponseCode::NameError => "NXDOMAIN".to_string(),
+                    ResponseCode::Refused => "REFUSED".to_string(),
+                    // todo: not sure of the "right" way to represent formaterror / not implemented
+                    ResponseCode::FormatError => "FORMATERROR".to_string(),
+                    ResponseCode::NotImplemented => "NOTIMPLEMENTED".to_string(),
+                    _ => "RESERVED".to_string(),
+                }
+            };
+            println!(
+                "{:5} {:30} {:20} {}",
+                format!("{}", &orig_packet.typ),
+                &orig_packet.qname,
+                src_ip,
+                response
+            );
+            Ok(None)
+        }
+    }
 }
 
 fn format_answers(records: Vec<ResourceRecord>) -> String {
@@ -264,25 +296,5 @@ fn format_record(rdata: &RData) -> String {
             format!("TXT: {}", parts.join(" "))
         }
         _ => panic!("I don't recognize that query type, {:?}", rdata),
-    }
-}
-
-async fn track_no_responses(map: Arc<Mutex<HashMap<u16, OrigPacket>>>) {
-    //if we don't see a response to a query within 1 second, print "<no response>"
-    loop {
-        delay_for(Duration::from_millis(1000)).await;
-        let map = &mut *map.lock().unwrap();
-        map.retain(|_, packet| {
-            if packet.report {
-                println!(
-                    "{:5} {:30} {:20} <no response>",
-                    packet.typ, packet.qname, packet.server_ip
-                );
-            }
-            !packet.report
-        });
-        for (_, packet) in map.iter_mut() {
-            (*packet).report = true
-        }
     }
 }
