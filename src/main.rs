@@ -19,6 +19,7 @@ struct OrigPacket {
     qname: String,
     typ: String,
     server_ip: String,
+    server_port: u16,
     report: bool,
 }
 
@@ -142,6 +143,11 @@ fn print_packet(
             IpHeader::Version4(x) => (x.source.into(), x.destination.into()),
             IpHeader::Version6(x) => (x.source.into(), x.destination.into()),
         };
+    let udp_header = packet
+        .transport
+        .expect("Error: Expected transport header")
+        .udp()
+        .expect("Error: Expected UDP packet");
     // Parse DNS data
     let dns_packet = DNSPacket::parse(packet.payload).wrap_err("Failed to parse DNS packet")?;
     let question = &dns_packet.questions[0];
@@ -154,9 +160,17 @@ fn print_packet(
                 typ: format!("{:?}", question.qtype),
                 qname: question.qname.to_string(),
                 server_ip: format!("{}", dest_ip),
+                server_port: udp_header.destination_port,
                 report: false,
             },
         );
+        return Ok(());
+    }
+    let orig_packet = map.get(&id).unwrap(); // this unwrap() is ok because we know it's in the map
+    if (format!("{}", src_ip).as_str(), udp_header.source_port)
+        != (orig_packet.server_ip.as_str(), orig_packet.server_port)
+    {
+        // This packet isn't a response to the original packet, so we ignore it -- it's just a retry
         return Ok(());
     }
     // If it's the second time we're seeing it, it's a response, so remove it from the map
