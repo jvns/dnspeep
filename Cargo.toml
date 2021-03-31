@@ -1,5 +1,5 @@
 [package]
-name = "dnsspy"
+name = "dnspeep"
 version = "0.1.0"
 authors = ["Julia Evans <julia@jvns.ca>"]
 edition = "2018"
