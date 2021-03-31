@@ -120,11 +120,12 @@ fn print_packet(
     } else {
         match dns_packet.header.response_code {
             ResponseCode::NoError => "NOERROR".to_string(),
-            ResponseCode::FormatError => "FORMATERROR".to_string(),
             ResponseCode::ServerFailure => "SERVFAIL".to_string(),
             ResponseCode::NameError => "NXDOMAIN".to_string(),
-            ResponseCode::NotImplemented => "NOTIMPLEMENTED".to_string(),
             ResponseCode::Refused => "REFUSED".to_string(),
+            // todo: not sure of the "right" way to represent formaterror / not implemented
+            ResponseCode::FormatError => "FORMATERROR".to_string(),
+            ResponseCode::NotImplemented => "NOTIMPLEMENTED".to_string(),
             _ => "RESERVED".to_string(),
         }
     };
