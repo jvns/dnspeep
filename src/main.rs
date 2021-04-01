@@ -1,6 +1,7 @@
-use dns_parser::rdata;
-use dns_parser::Packet as DNSPacket;
-use dns_parser::{RData, ResourceRecord, ResponseCode};
+use bytes::Bytes;
+use dns_message_parser::rr::RR;
+use dns_message_parser::DecodeError;
+use dns_message_parser::Dns;
 use etherparse::IpHeader;
 use etherparse::PacketHeaders;
 use eyre::{Result, WrapErr};
@@ -206,20 +207,24 @@ fn print_packet(
         .udp()
         .expect("Error: Expected UDP packet");
     // Parse DNS data
-    let dns_packet = DNSPacket::parse(packet.payload).wrap_err("Failed to parse DNS packet")?;
-    let id = dns_packet.header.id;
+    let dns_packet = match Dns::decode(Bytes::copy_from_slice(packet.payload)) {
+        Ok(dns) => dns,
+        Err(DecodeError::RemainingBytes(_, dns)) => dns,
+        x => x.wrap_err("Failed to parse DNS packet")?,
+    };
+    let id = dns_packet.id;
     // The map is a list of queries we've seen in the last 1 second
     // Decide what to do depending on whether this is a query and whether we've seen that ID
     // recently
-    match (dns_packet.header.query, map.contains_key(&id)) {
+    match (dns_packet.flags.qr == false, map.contains_key(&id)) {
         (true, false) => {
             // It's a new query, track it
             let question = &dns_packet.questions[0];
             map.insert(
                 id,
                 OrigPacket {
-                    typ: format!("{:?}", question.qtype),
-                    qname: question.qname.to_string(),
+                    typ: format!("{:?}", question.q_type),
+                    qname: question.domain_name.to_string(),
                     server_ip: format!("{}", dest_ip),
                     server_port: udp_header.destination_port,
                     has_response: false,
@@ -243,16 +248,7 @@ fn print_packet(
             let response = if !dns_packet.answers.is_empty() {
                 format_answers(dns_packet.answers)
             } else {
-                match dns_packet.header.response_code {
-                    ResponseCode::NoError => "NOERROR".to_string(),
-                    ResponseCode::ServerFailure => "SERVFAIL".to_string(),
-                    ResponseCode::NameError => "NXDOMAIN".to_string(),
-                    ResponseCode::Refused => "REFUSED".to_string(),
-                    // todo: not sure of the "right" way to represent formaterror / not implemented
-                    ResponseCode::FormatError => "FORMATERROR".to_string(),
-                    ResponseCode::NotImplemented => "NOTIMPLEMENTED".to_string(),
-                    _ => "RESERVED".to_string(),
-                }
+                dns_packet.flags.rcode.to_string().to_uppercase()
             };
             println!(
                 "{:5} {:30} {:20} {}",
@@ -266,36 +262,24 @@ fn print_packet(
     }
 }
 
-fn format_answers(records: Vec<ResourceRecord>) -> String {
-    let formatted: Vec<String> = records.iter().map(|x| format_record(&x.data)).collect();
+fn format_answers(records: Vec<RR>) -> String {
+    let formatted: Vec<String> = records.iter().map(|x| format_record(&x)).collect();
     formatted.join(", ")
 }
 
-fn format_record(rdata: &RData) -> String {
+fn format_record(rdata: &RR) -> String {
     match rdata {
-        RData::A(rdata::a::Record(addr)) => format!("A: {}", addr),
-        RData::AAAA(rdata::aaaa::Record(addr)) => format!("AAAA: {}", addr),
-        RData::CNAME(rdata::cname::Record(name)) => format!("CNAME: {}", name),
-        RData::PTR(rdata::ptr::Record(name)) => format!("PTR: {}", name),
-        RData::MX(rdata::mx::Record {
-            preference,
-            exchange,
-        }) => format!("MX: {} {}", preference, exchange),
-        RData::NS(rdata::ns::Record(name)) => format!("NS: {}", name),
-        RData::SOA(x) => format!("SOA:{}...", x.primary_ns),
-        RData::SRV(rdata::srv::Record {
-            priority,
-            weight,
-            port,
-            target,
-        }) => format!("SRV: {} {} {} {}", priority, weight, port, target),
-        RData::TXT(x) => {
-            let parts: Vec<String> = x
-                .iter()
-                .map(|bytes| str::from_utf8(bytes).unwrap().to_string())
-                .collect();
-            format!("TXT: {}", parts.join(" "))
-        }
+        RR::A(x) => format!("A: {}", x.ipv4_addr),
+        RR::AAAA(x) => format!("AAAA: {}", x.ipv6_addr),
+        RR::CNAME(x) => format!("CNAME: {}", x.c_name),
+        RR::PTR(x) => format!("PTR: {}", x.ptr_d_name),
+        RR::MX(x) => format!("MX: {} {}", x.preference, x.exchange),
+        RR::NS(x) => format!("NS: {}", x.ns_d_name),
+        RR::SOA(x) => format!("SOA:{}...", x.m_name),
+        RR::SRV(x) => format!("SRV: {} {} {} {}", x.priority, x.weight, x.port, x.target),
+        RR::URI(x) => format!("URI: {} {} {}", x.priority, x.weight, x.uri),
+        RR::HINFO(x) => format!("URI: {} {}", x.cpu, x.os),
+        RR::TXT(x) => format!("TXT: {}", x.string),
         _ => panic!("I don't recognize that query type, {:?}", rdata),
     }
 }
