@@ -26,19 +26,26 @@ struct OrigPacket {
 #[tokio::main]
 async fn main() -> Result<()> {
     let map = Arc::new(Mutex::new(HashMap::new()));
-    let opts = parse_args()?;
+    let source = parse_args()?.source;
 
-    let stream = capture_stream(map.clone(), opts.port)?;
     println!(
         "{:5} {:30} {:20} {}",
         "query", "name", "server IP", "response"
     );
-    tokio::join!(capture_packets(stream), track_no_responses(map));
+    match source {
+        Source::Port(port) => {
+            let stream = capture_stream(map.clone(), port)?;
+            tokio::join!(capture_packets(stream), track_no_responses(map));
+        }
+        Source::Filename(filename) => {
+            capture_file(&filename)?;
+        }
+    };
     Ok(())
 }
 
 struct Opts {
-    port: u32,
+    source: Source,
 }
 
 fn parse_args() -> Result<Opts> {
@@ -47,6 +54,7 @@ fn parse_args() -> Result<Opts> {
 
     let mut opts = Options::new();
     opts.optopt("p", "port", "port number to listen on", "PORT");
+    opts.optopt("f", "file", "read packets from pcap file", "FILENAME");
     opts.optflag("h", "help", "print this help menu");
     let matches = match opts.parse(&args[1..]) {
         Ok(m) => m,
@@ -59,8 +67,14 @@ fn parse_args() -> Result<Opts> {
         std::process::exit(0);
     }
     let port_str = matches.opt_str("p").unwrap_or("53".to_string());
-    if let Ok(port) = port_str.parse() {
-        Ok(Opts { port })
+    if let Some(filename) = matches.opt_str("f") {
+        Ok(Opts {
+            source: Source::Filename(filename.to_string()),
+        })
+    } else if let Ok(port) = port_str.parse() {
+        Ok(Opts {
+            source: Source::Port(port),
+        })
     } else {
         eprintln!("Invalid port number: {}", &port_str);
         std::process::exit(1);
@@ -80,9 +94,27 @@ What the output columns mean:
 ");
 }
 
+enum Source {
+    Port(u16),
+    Filename(String),
+}
+
+fn capture_file(filename: &str) -> Result<()> {
+    let mut map = HashMap::new();
+    let mut cap = Capture::from_file(filename).wrap_err("Failed to start capture from file")?;
+    let linktype = cap.get_datalink();
+    while let Ok(packet) = cap.next() {
+        if let Err(e) = print_packet(packet, linktype, &mut map) {
+            // Continue if there's an error, but print a warning
+            eprintln!("Error parsing DNS packet: {:#}", e);
+        }
+    }
+    Ok(())
+}
+
 fn capture_stream(
     map: Arc<Mutex<HashMap<u16, OrigPacket>>>,
-    port: u32,
+    port: u16,
 ) -> Result<PacketStream<Active, PrintCodec>> {
     let mut cap = Capture::from_device("any")
         .wrap_err("Failed to find device 'any'")?
@@ -129,6 +161,7 @@ fn print_packet(
     let packet_data = match linktype {
         Linktype::ETHERNET => &orig_packet.data[14..],
         Linktype::LINUX_SLL => &orig_packet.data[16..],
+        Linktype::LINUX_SLL2 => &orig_packet.data[20..],
         Linktype::IPV4 => &orig_packet.data,
         Linktype::IPV6 => &orig_packet.data,
         Linktype(12) => &orig_packet.data,
