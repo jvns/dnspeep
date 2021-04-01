@@ -164,6 +164,7 @@ fn print_packet(
         Linktype::LINUX_SLL2 => &orig_packet.data[20..],
         Linktype::IPV4 => &orig_packet.data,
         Linktype::IPV6 => &orig_packet.data,
+        Linktype::NULL => &orig_packet.data[4..],
         Linktype(12) => &orig_packet.data,
         Linktype(14) => &orig_packet.data,
         _ => panic!("unknown link type {:?}", linktype),
