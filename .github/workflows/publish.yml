@@ -61,7 +61,7 @@ jobs:
       run: cargo build --release --locked --target ${{ matrix.target }}
 
     - name: Create release tarball
-      run: tar -C target/${{matrix.target}}/release/ -cf ${{ matrix.asset_name }} dnspeep 
+      run: tar -C target/${{matrix.target}}/release/ -czf ${{ matrix.asset_name }} dnspeep 
 
     - name: Get the version
       id: get_version
