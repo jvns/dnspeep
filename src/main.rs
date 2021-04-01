@@ -88,7 +88,7 @@ fn capture_stream(
         .wrap_err("Failed to find device 'any'")?
         .immediate_mode(true)
         .open()
-        .wrap_err("Failed to start. You need to run this as root.")?
+        .wrap_err("Failed to start. This may be because you need to run this as root.")?
         .setnonblock()
         .wrap_err("Failed to set nonblocking")?;
     let linktype = cap.get_datalink();
