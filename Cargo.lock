@@ -47,9 +47,9 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "dns-message-parser"
-version = "0.4.6"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c894b35cb1bd1f17e2d4227416806d386ad1b31d23359472163389d637d0dbd"
+checksum = "8e859c9ca137be3407a445a34eda3395aeef5aae12cd47d46a7fffba54460072"
 dependencies = [
  "bytes 1.0.1",
  "hex",
@@ -58,7 +58,7 @@ dependencies = [
 
 [[package]]
 name = "dnspeep"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytes 1.0.1",
  "dns-message-parser",
@@ -66,6 +66,7 @@ dependencies = [
  "eyre",
  "futures",
  "getopts",
+ "hex",
  "libc",
  "pcap",
  "tokio",
