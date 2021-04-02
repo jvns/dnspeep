@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use chrono::{DateTime, Utc};
 use dns_message_parser::rr::RR;
 use dns_message_parser::DecodeError;
 use dns_message_parser::Dns;
@@ -16,6 +17,7 @@ use std::net::IpAddr;
 use std::str;
 use std::str::from_utf8;
 use std::sync::{Arc, Mutex};
+use std::time;
 use tokio::time::{delay_for, Duration};
 
 #[derive(Clone)]
@@ -25,31 +27,70 @@ struct OrigPacket {
     server_ip: String,
     server_port: u16,
     has_response: bool,
+    timestamp: DateTime<Utc>,
+}
+
+#[derive(Clone)]
+struct Opts {
+    source: Source,
+    timestamp: bool,
+}
+
+#[derive(Clone)]
+enum Source {
+    Port(u16),
+    Filename(String),
+}
+
+impl Opts {
+    fn print_header(self: &Opts) {
+        if self.timestamp {
+            println!(
+                "{:14} {:5} {:30} {:20} {:9} {}",
+                "timestamp", "query", "name", "server IP", "elapsed", "response"
+            );
+        } else {
+            println!(
+                "{:5} {:30} {:20} {}",
+                "query", "name", "server IP", "response"
+            );
+        }
+    }
+    fn print_response(self: &Opts, packet: &OrigPacket, elapsed_time: &str, response: &str) {
+        if self.timestamp {
+            println!(
+                "{:14} {:5} {:30} {:20} {:9} {}",
+                packet.timestamp.format("%H:%M:%S%.3f"),
+                packet.typ,
+                packet.qname,
+                packet.server_ip,
+                elapsed_time,
+                response
+            );
+        } else {
+            println!(
+                "{:5} {:30} {:20} {}",
+                packet.typ, packet.qname, packet.server_ip, response
+            );
+        }
+    }
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let map = Arc::new(Mutex::new(HashMap::new()));
-    let source = parse_args()?.source;
-
-    println!(
-        "{:5} {:30} {:20} {}",
-        "query", "name", "server IP", "response"
-    );
-    match source {
+    let opts = parse_args()?;
+    opts.print_header();
+    match opts.clone().source {
         Source::Port(port) => {
-            let stream = capture_stream(map.clone(), port)?;
+            let stream = capture_stream(opts, map.clone(), port)?;
             capture_packets(stream).await;
         }
         Source::Filename(filename) => {
-            capture_file(&filename)?;
+            capture_file(&opts, &filename)?;
         }
     };
     Ok(())
-}
-
-struct Opts {
-    source: Source,
 }
 
 fn parse_args() -> Result<Opts> {
@@ -59,6 +100,11 @@ fn parse_args() -> Result<Opts> {
     let mut opts = Options::new();
     opts.optopt("p", "port", "port number to listen on", "PORT");
     opts.optopt("f", "file", "read packets from pcap file", "FILENAME");
+    opts.optflag(
+        "t",
+        "timestamp",
+        "print timestamp and elapsed time for each query",
+    );
     opts.optflag("h", "help", "print this help menu");
     let matches = match opts.parse(&args[1..]) {
         Ok(m) => m,
@@ -70,19 +116,25 @@ fn parse_args() -> Result<Opts> {
         print_usage(&program, opts);
         std::process::exit(0);
     }
-    let port_str = matches.opt_str("p").unwrap_or("53".to_string());
+    let mut opts = Opts {
+        source: Source::Port(53),
+        timestamp: matches.opt_present("t"),
+    };
+
     if let Some(filename) = matches.opt_str("f") {
-        Ok(Opts {
-            source: Source::Filename(filename.to_string()),
-        })
-    } else if let Ok(port) = port_str.parse() {
-        Ok(Opts {
-            source: Source::Port(port),
-        })
-    } else {
-        eprintln!("Invalid port number: {}", &port_str);
-        std::process::exit(1);
+        opts.source = Source::Filename(filename.to_string());
+    } else if let Some(port_str) = matches.opt_str("p") {
+        match port_str.parse() {
+            Ok(port) => {
+                opts.source = Source::Port(port);
+            }
+            Err(_) => {
+                eprintln!("Invalid port number: {}", &port_str);
+                std::process::exit(1);
+            }
+        }
     }
+    Ok(opts)
 }
 
 fn print_usage(program: &str, opts: Options) {
@@ -93,22 +145,18 @@ What the output columns mean:
    query:     DNS query type (A, CNAME, etc)
    name:      Hostname the DNS query is requesting
    server IP: IP address of the DNS server the query was made to
+   elapsed:   How long the DNS response took to arrive
    response:  Responses from the Answer section of the DNS response (or \"<no response>\" if none was found).
               Multiple responses are separated by commas.
 ");
 }
 
-enum Source {
-    Port(u16),
-    Filename(String),
-}
-
-fn capture_file(filename: &str) -> Result<()> {
+fn capture_file(opts: &Opts, filename: &str) -> Result<()> {
     let mut map = HashMap::new();
     let mut cap = Capture::from_file(filename).wrap_err("Failed to start capture from file")?;
     let linktype = cap.get_datalink();
     while let Ok(packet) = cap.next() {
-        if let Err(e) = print_packet(packet, linktype, &mut map) {
+        if let Err(e) = print_packet(opts, packet, linktype, &mut map) {
             // Continue if there's an error, but print a warning
             eprintln!("Error parsing DNS packet: {:#}", e);
         }
@@ -117,6 +165,7 @@ fn capture_file(filename: &str) -> Result<()> {
 }
 
 fn capture_stream(
+    opts: Opts,
     map: Arc<Mutex<HashMap<u16, OrigPacket>>>,
     port: u16,
 ) -> Result<PacketStream<Active, PrintCodec>> {
@@ -130,8 +179,12 @@ fn capture_stream(
     let linktype = cap.get_datalink();
     cap.filter(format!("udp and port {}", port).as_str(), true)
         .wrap_err("Failed to create BPF filter")?;
-    cap.stream(PrintCodec { map, linktype })
-        .wrap_err("Failed to create stream")
+    cap.stream(PrintCodec {
+        map,
+        linktype,
+        opts: opts,
+    })
+    .wrap_err("Failed to create stream")
 }
 
 async fn capture_packets(mut stream: PacketStream<Active, PrintCodec>) {
@@ -141,6 +194,7 @@ async fn capture_packets(mut stream: PacketStream<Active, PrintCodec>) {
 pub struct PrintCodec {
     map: Arc<Mutex<HashMap<u16, OrigPacket>>>,
     linktype: Linktype,
+    opts: Opts,
 }
 
 impl PacketCodec for PrintCodec {
@@ -149,7 +203,8 @@ impl PacketCodec for PrintCodec {
     fn decode(&mut self, packet: Packet) -> Result<(), pcap::Error> {
         let mut map = self.map.lock().unwrap();
         let map_clone = self.map.clone();
-        match print_packet(packet, self.linktype, &mut *map) {
+        let opts_clone = self.opts.clone();
+        match print_packet(&self.opts, packet, self.linktype, &mut *map) {
             Ok(Some(id)) => {
                 // This means we just got a new query we haven't seen before.
                 // After 1 second, remove from the map and print '<no response>' if there was no
@@ -159,10 +214,7 @@ impl PacketCodec for PrintCodec {
                     let mut map = map_clone.lock().unwrap();
                     if let Some(packet) = map.get(&id) {
                         if packet.has_response == false {
-                            println!(
-                                "{:5} {:30} {:20} <no response>",
-                                packet.typ, packet.qname, packet.server_ip
-                            );
+                            opts_clone.print_response(&packet, "", "<no response>");
                         }
                     }
                     map.remove(&id);
@@ -178,7 +230,14 @@ impl PacketCodec for PrintCodec {
     }
 }
 
+fn get_time(packet: &Packet) -> DateTime<Utc> {
+    let packet_time = packet.header.ts;
+    let micros = (packet_time.tv_sec * 1000000 + packet_time.tv_usec) as u64;
+    DateTime::<Utc>::from(time::UNIX_EPOCH + time::Duration::from_micros(micros))
+}
+
 fn print_packet(
+    opts: &Opts,
     orig_packet: Packet,
     linktype: Linktype,
     map: &mut HashMap<u16, OrigPacket>,
@@ -198,7 +257,7 @@ fn print_packet(
     // Parse the IP header and UDP header
     let packet =
         PacketHeaders::from_ip_slice(packet_data).wrap_err("Failed to parse Ethernet packet")?;
-    let (src_ip, dest_ip): (IpAddr, IpAddr) =
+    let (_src_ip, dest_ip): (IpAddr, IpAddr) =
         match packet.ip.expect("Error: failed to parse IP address") {
             IpHeader::Version4(x) => (x.source.into(), x.destination.into()),
             IpHeader::Version6(x) => (x.source.into(), x.destination.into()),
@@ -225,6 +284,7 @@ fn print_packet(
             map.insert(
                 id,
                 OrigPacket {
+                    timestamp: get_time(&orig_packet),
                     typ: format!("{:?}", question.q_type),
                     qname: question.domain_name.to_string(),
                     server_ip: format!("{}", dest_ip),
@@ -246,19 +306,14 @@ fn print_packet(
         (false, true) => {
             map.entry(id).and_modify(|e| e.has_response = true);
             // It's a response for a query we remember, so format it and print it out
-            let orig_packet = map.get(&id).unwrap();
+            let query_packet = map.get(&id).unwrap();
             let response = if !dns_packet.answers.is_empty() {
                 format_answers(dns_packet.answers)
             } else {
                 dns_packet.flags.rcode.to_string().to_uppercase()
             };
-            println!(
-                "{:5} {:30} {:20} {}",
-                format!("{}", &orig_packet.typ),
-                &orig_packet.qname,
-                src_ip,
-                response
-            );
+            let ms = (get_time(&orig_packet) - query_packet.timestamp).num_milliseconds();
+            opts.print_response(query_packet, &format!("{}ms", ms), &response);
             Ok(None)
         }
     }
