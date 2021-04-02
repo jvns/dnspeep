@@ -232,7 +232,7 @@ impl PacketCodec for PrintCodec {
 
 fn get_time(packet: &Packet) -> DateTime<Utc> {
     let packet_time = packet.header.ts;
-    let micros = (packet_time.tv_sec * 1000000 + packet_time.tv_usec) as u64;
+    let micros = ((packet_time.tv_sec * 1000000) as u64) + (packet_time.tv_usec as u64);
     DateTime::<Utc>::from(time::UNIX_EPOCH + time::Duration::from_micros(micros))
 }
 
