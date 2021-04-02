@@ -77,7 +77,7 @@ dependencies = [
 
 [[package]]
 name = "dnspeep"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bytes 1.0.1",
  "chrono",
