@@ -80,7 +80,7 @@ fn parse_args() -> Result<Opts, Report> {
         "print timestamp and elapsed time for each query",
     );
     opts.optopt("i", "interface", "interface's ID", "INTERFACE_ID");
-    opts.optflag("l", "list", "list all devices");
+    opts.optflag("l", "list", "list all interfaces");
     opts.optflag("h", "help", "print this help menu");
     let matches = match opts.parse(&args[1..]) {
         Ok(m) => m,
@@ -111,8 +111,8 @@ fn parse_args() -> Result<Opts, Report> {
             .map(|d| d.to_owned());
 
         match interface {
-            Some(device) => {
-                opts.source = Source::Device(device);
+            Some(interface) => {
+                opts.source = Source::Interface(interface);
             }
             None => {
                 eprintln!("Cannot find an interface with the id `{}`", &interface_id);
@@ -152,9 +152,10 @@ What the output columns mean:
 fn list_all_interface() -> Result<(), Report> {
     let empty_str = "".to_string();
 
-    let devices = pcap::Device::list().wrap_err("Error while listing interface on your device")?;
+    let interfaces =
+        pcap::Device::list().wrap_err("Encounter error while listing interfaces on your device")?;
     println!("{:55} {}", "Interface", "Interface Description");
-    devices.iter().for_each(|it| {
+    interfaces.iter().for_each(|it| {
         let name = &it.name;
         let desc = it.desc.as_ref().unwrap_or(&empty_str);
         println!("{:55} {}", name, desc);

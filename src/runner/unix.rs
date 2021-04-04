@@ -1,5 +1,5 @@
 #[cfg(not(windows))]
-use super::super::capturer::{capture_device, capture_file, capture_packets, capture_stream};
+use super::super::capturer::{capture_file, capture_interface, capture_packets, capture_stream};
 #[cfg(not(windows))]
 use super::super::Opts;
 #[cfg(not(windows))]
@@ -16,7 +16,7 @@ pub async fn run_on_unix(opts: Opts) -> Result<(), Report> {
     let source = opts.source.clone();
 
     return match source {
-        Source::Device(device) => capture_device(device, opts),
+        Source::Interface(interface) => capture_interface(interface, opts),
         Source::Port(port) => {
             let map = Arc::new(Mutex::new(HashMap::new()));
             let stream = capture_stream(opts, map.clone(), port)?;

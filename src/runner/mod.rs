@@ -4,7 +4,7 @@ use pcap::Device;
 pub enum Source {
     Port(u16),
     Filename(String),
-    Device(Device), // device name used to filter devices
+    Interface(Device),
 }
 
 #[cfg(windows)]

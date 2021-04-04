@@ -60,8 +60,8 @@ pub fn capture_file(filename: &str, opts: Opts) -> Result<(), Report> {
     Ok(())
 }
 
-pub fn capture_device(device: Device, opts: Opts) -> Result<(), Report> {
-    let mut cap = pcap::Capture::from_device(device)
+pub fn capture_interface(interface: Device, opts: Opts) -> Result<(), Report> {
+    let mut cap = pcap::Capture::from_device(interface)
         .unwrap()
         .immediate_mode(true)
         .open()
@@ -88,7 +88,7 @@ pub fn capture_device(device: Device, opts: Opts) -> Result<(), Report> {
     while let Ok(packet) = cap.next() {
         decoder
             .decode(packet)
-            .wrap_err("Encounter error while capturing packets from device")?
+            .wrap_err("Encounter error while capturing packets from interface")?
     }
 
     Ok(())
