@@ -9,7 +9,14 @@ use std::{
 use super::packet::PrintCodec;
 use super::Opts;
 use eyre::{Report, Result, WrapErr};
+#[cfg(not(windows))]
+use futures::StreamExt;
 use pcap::{Capture, Device};
+
+#[cfg(not(windows))]
+use pcap::stream::{PacketCodec, PacketStream};
+#[cfg(not(windows))]
+use pcap::Active;
 
 #[cfg(not(windows))]
 pub fn capture_stream(
@@ -30,17 +37,17 @@ pub fn capture_stream(
     cap.stream(PrintCodec {
         map,
         linktype,
-        opts: opts,
+        opts,
     })
     .wrap_err("Failed to create stream")
 }
 
 #[cfg(not(windows))]
-async fn capture_packets(mut stream: PacketStream<Active, PrintCodec>) {
+pub async fn capture_packets(mut stream: PacketStream<Active, PrintCodec>) {
     while stream.next().await.is_some() {}
 }
 
-pub fn capture_file(filename: &str, opts: Opts) -> Result<()> {
+pub fn capture_file(filename: &str, opts: Opts) -> Result<(), Report> {
     let mut map = HashMap::new();
     let mut cap = Capture::from_file(filename).wrap_err("Failed to start capture from file")?;
     let linktype = cap.get_datalink();
@@ -63,11 +70,21 @@ pub fn capture_device(device: Device, opts: Opts) -> Result<(), Report> {
         .expect("Failed to create BPF filter");
 
     let map = Arc::new(Mutex::new(HashMap::new()));
+
+    #[cfg(not(windows))]
+    let mut decoder = PrintCodec {
+        map,
+        linktype: cap.get_datalink(),
+        opts,
+    };
+
+    #[cfg(windows)]
     let decoder = PrintCodec {
         map,
         linktype: cap.get_datalink(),
         opts,
     };
+
     while let Ok(packet) = cap.next() {
         decoder
             .decode(packet)

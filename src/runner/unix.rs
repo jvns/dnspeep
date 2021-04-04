@@ -1,27 +1,29 @@
-use super::super::capturer::{capture_device, capture_file};
 #[cfg(not(windows))]
-use super::super::capturer::{capture_packets, capture_stream};
+use super::super::capturer::{capture_device, capture_file, capture_packets, capture_stream};
 #[cfg(not(windows))]
-use pcap::stream::{PacketCodec, PacketStream};
+use super::super::Opts;
 #[cfg(not(windows))]
-use pcap::Active;
+use super::super::Source;
 #[cfg(not(windows))]
-use super::super::packet::Opts;
+use eyre::Report;
+#[cfg(not(windows))]
+use std::collections::HashMap;
+#[cfg(not(windows))]
+use std::sync::{Arc, Mutex};
 
 #[cfg(not(windows))]
-pub async fn run_on_unix(opts: Opts) -> Result<()> {
-    let source = opts.source;
-    
-    match source {
-        Source::Device(device) => capture_device(device),
+pub async fn run_on_unix(opts: Opts) -> Result<(), Report> {
+    let source = opts.source.clone();
+
+    return match source {
+        Source::Device(device) => capture_device(device, opts),
         Source::Port(port) => {
             let map = Arc::new(Mutex::new(HashMap::new()));
-            let stream = capture_stream(map.clone(), port)?;
+            let stream = capture_stream(opts, map.clone(), port)?;
             capture_packets(stream).await;
+
+            Ok(())
         }
-        Source::Filename(filename) => {
-            capture_file(&filename)?;
-        }
+        Source::Filename(filename) => capture_file(&filename, opts),
     };
-    Ok(())
 }

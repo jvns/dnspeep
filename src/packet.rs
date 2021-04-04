@@ -8,6 +8,8 @@ use etherparse::IpHeader;
 use etherparse::PacketHeaders;
 use eyre::{Result, WrapErr};
 use hex::encode;
+#[cfg(not(windows))]
+use pcap::stream::PacketCodec;
 use pcap::{Linktype, Packet};
 use std::collections::HashMap;
 use std::net::IpAddr;
