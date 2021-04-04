@@ -19,7 +19,7 @@ pub async fn run_on_unix(opts: Opts) -> Result<(), Report> {
         Source::Interface(interface) => capture_interface(interface, opts),
         Source::Port(port) => {
             let map = Arc::new(Mutex::new(HashMap::new()));
-            let stream = capture_stream(opts, map.clone(), port)?;
+            let stream = capture_stream(opts, map, port)?;
             capture_packets(stream).await;
 
             Ok(())
