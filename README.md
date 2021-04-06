@@ -15,11 +15,27 @@ A     www.neopets.com                192.168.1.1     CNAME: r9c3n8d2.stackpathcd
 AAAA  www.neopets.com                192.168.1.1     CNAME: r9c3n8d2.stackpathcdn.com
 ```
 
-### Installing
+## How to install
+
+You can install dnspeep using the different methods below.
+
+### Installing the binary release
 
 1. Download recent release of `dnspeep` from [the GitHub releases page](https://github.com/jvns/dnspeep/releases)
-2. Unpack it
-3. Put the `dnspeep` binary in your PATH (for example in `/usr/local/bin`)
+1. Unpack it
+1. Put the `dnspeep` binary in your PATH (for example in `/usr/local/bin`)
+
+### Compile and installing from source
+
+1. Download recent source release of `dnspeep` from [the GitHub releases page](https://github.com/jvns/dnspeep/releases) or git clone this repository.
+1. Unpack it
+1. Run ```cargo build --release```
+1. Change to the "target/release" directory there.
+1. Put the `dnspeep` binary in your PATH (for example in `/usr/local/bin`)
+
+### Installing from a Linux package manager
+
+* If you are using Arch Linux, then you can install dnspeep from the [AUR](https://aur.archlinux.org/).
 
 ### How it works
 
