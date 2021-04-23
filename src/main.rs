@@ -41,13 +41,71 @@ struct Opts {
 }
 
 #[derive(Clone)]
+struct Interface {
+    device: Device,
+    port: u16,
+}
+
+fn find_device_with_name(name: &str) -> Result<Option<Device>> {
+    let device = pcap::Device::list()?
+        .iter()
+        .filter(|x| x.name.eq(name))
+        .nth(0)
+        .map(|x| x.to_owned());
+
+    Ok(device)
+}
+
+impl Interface {
+    #[cfg(windows)]
+    fn from_default() -> Result<Interface> {
+        let device = pcap::Device::lookup().wrap_err("Cannot find any interface on your device")?;
+        // pcap doesn't return the device's desc in `lookup` method.
+        // Using unwrap is safe here since we have gotten the correct name.
+        let device = find_device_with_name(&device.name)?.unwrap();
+
+        Ok(Interface::from_device(device))
+    }
+
+    #[cfg(not(windows))]
+    fn from_any() -> Result<Interface> {
+        let device = find_device_with_name("any").wrap_err("Cannot find the interface `any`")?;
+        match device {
+            Some(dev) => Ok(Interface::from_device(dev)),
+            None => panic!("Cannot find the interface `any`"),
+        }
+    }
+
+    fn from_device(device: Device) -> Interface {
+        Interface { device, port: 53 }
+    }
+}
+
+#[derive(Clone)]
 enum Source {
-    Port(u16),
+    Interface(Interface),
     Filename(String),
-    Interface(Device),
 }
 
 impl Opts {
+    fn print_source(self: &Opts) {
+        match &self.source {
+            Source::Interface(iter) => {
+                let name = &iter.device.name;
+                let desc = iter
+                    .device
+                    .desc
+                    .as_ref()
+                    .map(|desc| format!("({})", desc))
+                    .unwrap_or(String::from(""));
+                let port = iter.port;
+                println!("Capturing from interface {}{} at port {}", name, desc, port)
+            }
+            Source::Filename(filename) => {
+                println!("Capturing from file {}", filename)
+            }
+        }
+    }
     fn print_header(self: &Opts) {
         if self.timestamp {
             println!(
@@ -85,26 +143,25 @@ impl Opts {
 async fn main() -> Result<()> {
     let map = Arc::new(Mutex::new(HashMap::new()));
     let opts = parse_args()?;
+    opts.print_source();
     opts.print_header();
 
     match opts.clone().source {
-        #[allow(unused_variables)]
-        Source::Port(port) => {
-            #[cfg(not(windows))]
-            {
-                let stream = capture_stream(opts, map.clone(), port)?;
-                capture_packets(stream).await;
-            }
+        Source::Interface(interface) => {
             #[cfg(windows)]
             {
-                eprintln!("On windows, use `interface` or `file` instead.");
-                std::process::exit(1);
+                capture_interface(interface, map, opts)?
+            }
+
+            #[cfg(not(windows))]
+            {
+                let stream = capture_stream(opts, map, interface)?;
+                capture_packets(stream).await;
             }
         }
         Source::Filename(filename) => {
             capture_file(&opts, &filename)?;
         }
-        Source::Interface(interface) => capture_interface(interface, map, opts)?,
     };
     Ok(())
 }
@@ -147,20 +204,17 @@ fn parse_args() -> Result<Opts> {
     }
 
     let mut opts = Opts {
-        source: Source::Port(53),
+        #[cfg(windows)]
+        source: Source::Interface(Interface::from_default()?),
+        #[cfg(not(windows))]
+        source: Source::Interface(Interface::from_any()?),
         timestamp: matches.opt_present("t"),
     };
 
     if let Some(interface_name) = matches.opt_str("i") {
-        let interface = pcap::Device::list()?
-            .iter()
-            .filter(|x| x.name.eq(&interface_name))
-            .nth(0)
-            .map(|x| x.to_owned());
-
-        match interface {
-            Some(interface) => {
-                opts.source = Source::Interface(interface);
+        match find_device_with_name(&interface_name)? {
+            Some(device) => {
+                opts.source = Source::Interface(Interface::from_device(device));
             }
             None => {
                 eprintln!(
@@ -172,11 +226,14 @@ fn parse_args() -> Result<Opts> {
         }
     } else if let Some(filename) = matches.opt_str("f") {
         opts.source = Source::Filename(filename.to_string());
-    } else if let Some(port_str) = matches.opt_str("p") {
+    }
+    if let Some(port_str) = matches.opt_str("p") {
         match port_str.parse() {
-            Ok(port) => {
-                opts.source = Source::Port(port);
-            }
+            // set port to current interface config
+            Ok(port) => match &mut opts.source {
+                Source::Interface(iter) => iter.port = port,
+                _ => {}
+            },
             Err(_) => {
                 eprintln!("Invalid port number: {}", &port_str);
                 std::process::exit(1);
@@ -217,9 +274,9 @@ fn capture_file(opts: &Opts, filename: &str) -> Result<()> {
 fn capture_stream(
     opts: Opts,
     map: Arc<Mutex<HashMap<u16, OrigPacket>>>,
-    port: u16,
+    interface: Interface,
 ) -> Result<PacketStream<Active, PrintCodec>> {
-    let mut cap = Capture::from_device("any")
+    let mut cap = Capture::from_device(interface.device)
         .wrap_err("Failed to find device 'any'")?
         .immediate_mode(true)
         .open()
@@ -227,7 +284,7 @@ fn capture_stream(
         .setnonblock()
         .wrap_err("Failed to set nonblocking")?;
     let linktype = cap.get_datalink();
-    cap.filter(format!("udp and port {}", port).as_str(), true)
+    cap.filter(format!("udp and port {}", interface.port).as_str(), true)
         .wrap_err("Failed to create BPF filter")?;
     cap.stream(PrintCodec {
         map,
@@ -242,18 +299,19 @@ async fn capture_packets(mut stream: PacketStream<Active, PrintCodec>) {
     while stream.next().await.is_some() {}
 }
 
+#[cfg(windows)]
 fn capture_interface(
-    interface: Device,
+    interface: Interface,
     map: Arc<Mutex<HashMap<u16, OrigPacket>>>,
     opts: Opts,
 ) -> Result<()> {
-    let mut cap = pcap::Capture::from_device(interface)
+    let mut cap = pcap::Capture::from_device(interface.device)
         .wrap_err("Failed to find the interface")?
         .immediate_mode(true)
         .open()
         .wrap_err("Failed to start.")?;
 
-    cap.filter(format!("udp and port {}", 53).as_str(), true)
+    cap.filter(format!("udp and port {}", interface.port).as_str(), true)
         .expect("Failed to create BPF filter");
 
     let mut decoder = PrintCodec {
