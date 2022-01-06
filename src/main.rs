@@ -417,5 +417,7 @@ fn format_record(rdata: &RR) -> String {
         RR::URI(x) => format!("URI: {} {} {}", x.priority, x.weight, x.uri),
         RR::WKS(x) => format!("WKS: {} {:x?}", x.protocol, x.bit_map),
         RR::X25(x) => format!("X25: {}", x.psdn_address), // not in use
+        RR::SVCB(x) => format!("SVCB: {} {} {}", x.priority, x.target_name, x.https),
+        RR::HTTPS(x) => format!("HTTPS: {} {}", x.priority, x.target_name),
     }
 }
