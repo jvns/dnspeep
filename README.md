@@ -15,6 +15,10 @@ A     www.neopets.com                192.168.1.1     CNAME: r9c3n8d2.stackpathcd
 AAAA  www.neopets.com                192.168.1.1     CNAME: r9c3n8d2.stackpathcdn.com
 ```
 
+### experimental software warning
+
+dnspeep is experimental and unmaintained, it definitely has bugs, I do not trust that its output is always correct
+
 ## How to install
 
 You can install dnspeep using the different methods below.
