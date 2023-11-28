@@ -25,7 +25,8 @@ struct OrigPacket {
     qname: String,
     typ: String,
     server_ip: String,
-    server_port: u16,
+    //Commented out to remove the "field is never read" warning
+    //server_port: u16,
     has_response: bool,
     timestamp: DateTime<Utc>,
 }
@@ -46,14 +47,11 @@ impl Opts {
     fn print_header(self: &Opts) {
         if self.timestamp {
             println!(
-                "{:14} {:5} {:30} {:20} {:9} {}",
-                "timestamp", "query", "name", "server IP", "elapsed", "response"
+                "{:14} {:5} {:30} {:20} {:9} response",
+                "timestamp", "query", "name", "server IP", "elapsed"
             );
         } else {
-            println!(
-                "{:5} {:30} {:20} {}",
-                "query", "name", "server IP", "response"
-            );
+            println!("{:5} {:30} {:20} response", "query", "name", "server IP");
         }
     }
     fn print_response(self: &Opts, packet: &OrigPacket, elapsed_time: &str, response: &str) {
@@ -109,7 +107,7 @@ fn parse_args() -> Result<Opts> {
     let matches = match opts.parse(&args[1..]) {
         Ok(m) => m,
         Err(f) => {
-            panic!(f.to_string())
+            panic!("{}", f.to_string())
         }
     };
     if matches.opt_present("h") {
@@ -182,7 +180,7 @@ fn capture_stream(
     cap.stream(PrintCodec {
         map,
         linktype,
-        opts: opts,
+        opts,
     })
     .wrap_err("Failed to create stream")
 }
@@ -204,7 +202,7 @@ impl PacketCodec for PrintCodec {
         let mut map = self.map.lock().unwrap();
         let map_clone = self.map.clone();
         let opts_clone = self.opts.clone();
-        match print_packet(&self.opts, packet, self.linktype, &mut *map) {
+        match print_packet(&self.opts, packet, self.linktype, &mut map) {
             Ok(Some(id)) => {
                 // This means we just got a new query we haven't seen before.
                 // After 1 second, remove from the map and print '<no response>' if there was no
@@ -213,8 +211,8 @@ impl PacketCodec for PrintCodec {
                     delay_for(Duration::from_millis(1000)).await;
                     let mut map = map_clone.lock().unwrap();
                     if let Some(packet) = map.get(&id) {
-                        if packet.has_response == false {
-                            opts_clone.print_response(&packet, "", "<no response>");
+                        if !packet.has_response {
+                            opts_clone.print_response(packet, "", "<no response>");
                         }
                     }
                     map.remove(&id);
@@ -247,11 +245,11 @@ fn print_packet(
         Linktype::ETHERNET => &orig_packet.data[14..],
         Linktype::LINUX_SLL => &orig_packet.data[16..],
         Linktype::LINUX_SLL2 => &orig_packet.data[20..],
-        Linktype::IPV4 => &orig_packet.data,
-        Linktype::IPV6 => &orig_packet.data,
+        Linktype::IPV4 => orig_packet.data,
+        Linktype::IPV6 => orig_packet.data,
         Linktype::NULL => &orig_packet.data[4..],
-        Linktype(12) => &orig_packet.data,
-        Linktype(14) => &orig_packet.data,
+        Linktype(12) => orig_packet.data,
+        Linktype(14) => orig_packet.data,
         _ => panic!("unknown link type {:?}", linktype),
     };
     // Parse the IP header and UDP header
@@ -262,11 +260,12 @@ fn print_packet(
             IpHeader::Version4(x) => (x.source.into(), x.destination.into()),
             IpHeader::Version6(x) => (x.source.into(), x.destination.into()),
         };
-    let udp_header = packet
-        .transport
-        .expect("Error: Expected transport header")
-        .udp()
-        .expect("Error: Expected UDP packet");
+    //dependency of server_port, which is not used/read
+    //let udp_header = packet
+    //    .transport
+    //    .expect("Error: Expected transport header")
+    //    .udp()
+    //    .expect("Error: Expected UDP packet");
     // Parse DNS data
     let dns_packet = match Dns::decode(Bytes::copy_from_slice(packet.payload)) {
         Ok(dns) => dns,
@@ -277,7 +276,7 @@ fn print_packet(
     // The map is a list of queries we've seen in the last 1 second
     // Decide what to do depending on whether this is a query and whether we've seen that ID
     // recently
-    match (dns_packet.flags.qr == false, map.contains_key(&id)) {
+    match (!dns_packet.flags.qr, map.contains_key(&id)) {
         (true, false) => {
             // It's a new query, track it
             let question = &dns_packet.questions[0];
@@ -288,7 +287,7 @@ fn print_packet(
                     typ: format!("{:?}", question.q_type),
                     qname: question.domain_name.to_string(),
                     server_ip: format!("{}", dest_ip),
-                    server_port: udp_header.destination_port,
+                    //server_port: udp_header.destination_port,
                     has_response: false,
                 },
             );
@@ -320,7 +319,7 @@ fn print_packet(
 }
 
 fn format_answers(records: Vec<RR>) -> String {
-    let formatted: Vec<String> = records.iter().map(|x| format_record(&x)).collect();
+    let formatted: Vec<String> = records.iter().map(format_record).collect();
     formatted.join(", ")
 }
 
