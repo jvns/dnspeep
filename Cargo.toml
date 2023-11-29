@@ -6,13 +6,13 @@ edition = "2018"
 
 [dependencies]
 pcap = { git = "https://github.com/jvns/pcap", features=["capture-stream"] }
-libc = "0.2.80"
+libc = "0.2.150"
 dns-message-parser = "~0.6"
 etherparse = "0.9.0"
 tokio = { version = "0.2", features = ["full"] }
 futures = "0.3"
-eyre = "0.6.5"
-getopts = "0.2.17"
+eyre = "0.6.9"
+getopts = "0.2.21"
 bytes = "~1.1"
 hex = "~0.4"
-chrono = "0.4.19"
+chrono = "0.4.31"
