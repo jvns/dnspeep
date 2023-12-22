@@ -24,7 +24,7 @@ jobs:
             os: macos-latest
             asset_name: dnspeep-macos.tar.gz
     steps:
-    - uses: actions/checkout@v1
+    - uses: actions/checkout@v4
 
     # we build libpcap from source and statically link it on Linux because
     # different Linux distros have different names for libpcap.so and so
